@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Assistant</title>
+  <style>
+    /* --- Layout & Theme --- */
+    body {
+      font-family: 'Poppins', sans-serif;
+      background: linear-gradient(135deg, #fafafa, #f4f4f4);
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      color: #222;
+    }
+
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .chat-container::-webkit-scrollbar { width: 10px; }
+    .chat-container::-webkit-scrollbar-thumb {
+      background: #d0d0d0;
+      border-radius: 8px;
+    }
+
+    /* --- Messages --- */
+    .message {
+      max-width: 72%;
+      padding: 14px 18px;
+      border-radius: 16px;
+      word-wrap: break-word;
+      font-size: 15px;
+      line-height: 1.45;
+      animation: fadeIn 240ms ease;
+    }
+    @keyframes fadeIn { from { opacity: .0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .user-message {
+      align-self: flex-end;
+      background: linear-gradient(135deg,#e9e9e9,#dfdfdf);
+      color: #000;
+      border-bottom-right-radius: 6px;
+    }
+
+    .bot-message {
+      align-self: flex-start; /* left aligned */
+      background: #fff;
+      box-shadow: 0 6px 14px rgba(15,15,15,0.06);
+      border-bottom-left-radius: 6px;
+    }
+
+    .system-message {
+      align-self: center;
+      background: #fff6e6;
+      color: #4a3b00;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 13px;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.03);
+    }
+
+    .error-message {
+      align-self: center;
+      background: #ffecec;
+      color: #7a1414;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 13px;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.03);
+    }
+
+    /* --- Input bar --- */
+    .input-bar {
+      display: flex;
+      gap: 10px;
+      padding: 12px;
+      background: #fff;
+      border-top: 1px solid #e6e6e6;
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      box-shadow: 0 -6px 20px rgba(10,10,10,0.03);
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #d0d0d0;
+      outline: none;
+      font-size: 15px;
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+    input[type="text"]:focus { border-color: #999; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+
+    select {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #d0d0d0;
+      background: #fff;
+      outline: none;
+    }
+
+    button {
+      background: #111;
+      color: #fff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: transform .08s ease, background .18s ease;
+      min-width: 72px;
+    }
+    button:disabled { opacity: .6; cursor: default; transform: none; }
+    button:active { transform: scale(.98); }
+    button:hover:not(:disabled) { background: #222; }
+
+    /* Typing indicator */
+    .typing {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      padding: 10px 14px;
+      border-radius: 12px;
+    }
+    .typing-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: #666; opacity: .25;
+      animation: dot 1.1s infinite;
+    }
+    .typing-dot:nth-child(2) { animation-delay: .15s; }
+    .typing-dot:nth-child(3) { animation-delay: .3s; }
+    @keyframes dot { 0% { opacity:.25; transform: translateY(0);} 50% { opacity:1; transform: translateY(-6px);} 100% { opacity:.25; transform: translateY(0);} }
+
+    /* small responsive tweak */
+    @media (max-width:520px) {
+      .message { max-width: 92%; }
+      .input-bar { padding: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="chat-container" id="chat-container"></div>
+
+  <div class="input-bar">
+    <input id="user-input" type="text" placeholder="Type your message..." />
+    <select id="action-select" title="Choose action">
+      <option value="content_creation">Content Creation</option>
+      <option value="content_research">Content Research</option>
+    </select>
+    <button id="send-btn">Send</button>
+  </div>
+
+  <script>
+    // ---------- CONFIG ----------
+    const WEBHOOK_URL = "https://saarthak56778s.app.n8n.cloud/webhook/ec658d90-c0c3-4432-9322-9715ad0f76ba";
+    // replace above with your webhook if different
+
+    // ---------- DOM ----------
+    const chatContainer = document.getElementById('chat-container');
+    const userInput = document.getElementById('user-input');
+    const actionSelect = document.getElementById('action-select');
+    const sendBtn = document.getElementById('send-btn');
+
+    // ---------- history ----------
+    let chatHistory = JSON.parse(localStorage.getItem('chatHistory') || "[]");
+    chatHistory.forEach(m => addMessage(m.text, m.sender));
+
+    // ---------- events ----------
+    sendBtn.addEventListener('click', sendMessage);
+    userInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+    // ---------- send logic ----------
+    async function sendMessage() {
+      const text = userInput.value.trim();
+      const action = actionSelect.value;
+      if (!text) return;
+      setSendingState(true);
+
+      addMessage(text, 'user');
+      chatHistory.push({ text, sender: 'user', ts: Date.now() });
+      saveChat();
+      userInput.value = '';
+
+      // typing indicator (append as .message + .bot-message + .typing)
+      const typing = document.createElement('div');
+      typing.className = 'message bot-message typing';
+      typing.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+      chatContainer.appendChild(typing);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+
+      try {
+        const response = await fetch(WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: text, action })
+        });
+
+        // read raw text to allow forgiving JSON parse
+        const raw = await response.text();
+        let data = null;
+        try { data = JSON.parse(raw); } catch (e) { data = raw; }
+
+        console.groupCollapsed('Webhook response');
+        console.log('status:', response.status, response.statusText);
+        console.log('raw:', raw);
+        console.log('parsed:', data);
+        console.groupEnd();
+
+        // if non-OK status, still try to extract useful message
+        if (!response.ok) {
+          const message = extractReply(data) || `Server returned ${response.status} ${response.statusText}`;
+          typing.remove();
+          addMessage(message, 'error');
+          setSendingState(false);
+          return;
+        }
+
+        const reply = extractReply(data) || "No response received from server.";
+        typing.remove();
+        addMessage(reply, 'bot');
+        chatHistory.push({ text: reply, sender: 'bot', ts: Date.now() });
+        saveChat();
+      } catch (err) {
+        console.error('Fetch error:', err);
+        typing.remove();
+        addMessage('Error connecting to server. See console for details.', 'error');
+      } finally {
+        setSendingState(false);
+      }
+    }
+
+    // ---------- helper: extract best text from many possible shapes ----------
+    function extractReply(data) {
+      if (!data && data !== "") return null;
+
+      // if already string
+      if (typeof data === 'string') return data;
+
+      // common: { output: "..." } or { output: [...] }
+      if (data.output) {
+        if (Array.isArray(data.output)) {
+          return data.output.map(i => typeof i === 'string' ? i : JSON.stringify(i)).join('\n\n');
+        }
+        return String(data.output);
+      }
+
+      // n8n often returns an array of items [{ json: { ... } }, ...]
+      if (Array.isArray(data)) {
+        const byJson = data.map(item => {
+          if (!item) return '';
+          if (typeof item === 'string') return item;
+          if (item.json) {
+            if (item.json.output) return item.json.output;
+            if (item.json.text) return item.json.text;
+            return JSON.stringify(item.json);
+          }
+          return JSON.stringify(item);
+        }).filter(Boolean);
+        if (byJson.length) return byJson.join('\n\n');
+      }
+
+      // other usual fields
+      if (data.message) return String(data.message);
+      if (data.error) return typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
+      if (data.result) return typeof data.result === 'string' ? data.result : JSON.stringify(data.result);
+
+      // as a last resort, stringify the object
+      try { return JSON.stringify(data); } catch (e) { return String(data); }
+    }
+
+    // ---------- UI helpers ----------
+    function addMessage(text, sender) {
+      const div = document.createElement('div');
+      if (sender === 'user') {
+        div.className = 'message user-message';
+        div.textContent = text;
+      } else if (sender === 'bot') {
+        div.className = 'message bot-message';
+        div.textContent = text;
+      } else if (sender === 'system') {
+        div.className = 'system-message';
+        div.textContent = text;
+      } else if (sender === 'error') {
+        div.className = 'error-message';
+        div.textContent = text;
+      } else {
+        div.className = 'message';
+        div.textContent = text;
+      }
+      chatContainer.appendChild(div);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function setSendingState(isSending) {
+      sendBtn.disabled = isSending;
+      sendBtn.textContent = isSending ? 'Sending...' : 'Send';
+      if (!isSending) userInput.focus();
+    }
+
+    function saveChat() {
+      try { localStorage.setItem('chatHistory', JSON.stringify(chatHistory)); } catch (e) { console.warn('Failed saving chat history', e); }
+    }
+
+    // focus
+    userInput.focus();
+  </script>
+</body>
+</html>
